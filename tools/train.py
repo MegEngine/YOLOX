@@ -3,14 +3,13 @@
 # Copyright (c) Megvii, Inc. and its affiliates.
 
 import argparse
-import random
-import warnings
 from loguru import logger
+import multiprocessing as mp
 
-import torch
-import torch.backends.cudnn as cudnn
+import megengine as mge
+import megengine.distributed as dist
 
-from yolox.core import Trainer, launch
+from yolox.core import Trainer
 from yolox.exp import get_exp
 from yolox.utils import configure_nccl
 
@@ -20,19 +19,9 @@ def make_parser():
     parser.add_argument("-expn", "--experiment-name", type=str, default=None)
     parser.add_argument("-n", "--name", type=str, default=None, help="model name")
 
-    # distributed
-    parser.add_argument(
-        "--dist-backend", default="nccl", type=str, help="distributed backend"
-    )
-    parser.add_argument(
-        "--dist-url", default=None, type=str, help="url used to set up distributed training"
-    )
     parser.add_argument("-b", "--batch-size", type=int, default=64, help="batch size")
     parser.add_argument(
         "-d", "--devices", default=None, type=int, help="device for training"
-    )
-    parser.add_argument(
-        "--local_rank", default=0, type=int, help="local rank for dist training"
     )
     parser.add_argument(
         "-f",
@@ -46,28 +35,13 @@ def make_parser():
     )
     parser.add_argument("-c", "--ckpt", default=None, type=str, help="checkpoint file")
     parser.add_argument(
-        "-e", "--start_epoch", default=None, type=int, help="resume training start epoch"
-    )
-    parser.add_argument(
         "--num_machine", default=1, type=int, help="num of node for training"
     )
     parser.add_argument(
         "--machine_rank", default=0, type=int, help="node rank for multi-node training"
     )
     parser.add_argument(
-        "--fp16",
-        dest="fp16",
-        default=True,
-        action="store_true",
-        help="Adopting mix precision training.",
-    )
-    parser.add_argument(
-        "-o",
-        "--occumpy",
-        dest="occumpy",
-        default=False,
-        action="store_true",
-        help="occumpy GPU memory first for training.",
+        "--sync_level", type=int, default=None, help="config sync level, use 0 to debug"
     )
     parser.add_argument(
         "opts",
@@ -83,19 +57,17 @@ def main(exp, args):
     if not args.experiment_name:
         args.experiment_name = exp.exp_name
 
-    if exp.seed is not None:
-        random.seed(exp.seed)
-        torch.manual_seed(exp.seed)
-        cudnn.deterministic = True
-        warnings.warn(
-            "You have chosen to seed training. This will turn on the CUDNN deterministic setting, "
-            "which can slow down your training considerably! You may see unexpected behavior "
-            "when restarting from checkpoints."
-        )
-
     # set environment variables for distributed training
     configure_nccl()
-    cudnn.benchmark = True
+
+    # enable dtr to avoid CUDA OOM
+    mge.dtr.enable()
+
+    if args.sync_level is not None:
+        # NOTE: use sync_level = 0 to debug mge error
+        from megengine.core._imperative_rt.core2 import config_async_level
+        logger.info("Using aysnc_level {}".format(args.sync_level))
+        config_async_level(args.sync_level)
 
     trainer = Trainer(exp, args)
     trainer.train()
@@ -106,11 +78,16 @@ if __name__ == "__main__":
     exp = get_exp(args.exp_file, args.name)
     exp.merge(args.opts)
 
-    num_gpu = torch.cuda.device_count() if args.devices is None else args.devices
-    assert num_gpu <= torch.cuda.device_count()
+    mp.set_start_method("spawn")
+    num_gpus = dist.helper.get_device_count_by_fork("gpu")
 
-    dist_url = "auto" if args.dist_url is None else args.dist_url
-    launch(
-        main, num_gpu, args.num_machine, backend=args.dist_backend,
-        dist_url=dist_url, args=(exp, args)
-    )
+    if args.devices is None:
+        args.devices = num_gpus
+
+    assert args.devices <= num_gpus
+
+    if args.devices > 1:
+        train = dist.launcher(main, n_gpus=args.devices)
+        train(exp, args)
+    else:
+        main(exp, args)

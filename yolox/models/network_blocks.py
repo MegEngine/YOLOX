@@ -2,38 +2,52 @@
 # -*- encoding: utf-8 -*-
 # Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
 
-import torch
-import torch.nn as nn
+import megengine.functional as F
+import megengine.module as M
 
 
-class SiLU(nn.Module):
-    """export-friendly version of nn.SiLU()"""
+class UpSample(M.Module):
+
+    def __init__(self, scale_factor=2, mode="bilinear"):
+        super().__init__()
+        self.scale_factor = scale_factor
+        self.mode = mode
+
+    def forward(self, x):
+        return F.vision.interpolate(x, scale_factor=self.scale_factor, mode=self.mode)
+
+
+class SiLU(M.Module):
+    """export-friendly version of M.SiLU()"""
 
     @staticmethod
     def forward(x):
-        return x * torch.sigmoid(x)
+        return x * F.sigmoid(x)
 
 
-def get_activation(name="silu", inplace=True):
+def get_activation(name="silu"):
     if name == "silu":
-        module = nn.SiLU(inplace=inplace)
+        if hasattr(M, "SiLU"):
+            module = M.SiLU()
+        else:
+            module = SiLU()
     elif name == "relu":
-        module = nn.ReLU(inplace=inplace)
+        module = M.ReLU()
     elif name == "lrelu":
-        module = nn.LeakyReLU(0.1, inplace=inplace)
+        module = M.LeakyReLU(0.1)
     else:
         raise AttributeError("Unsupported act type: {}".format(name))
     return module
 
 
-class BaseConv(nn.Module):
+class BaseConv(M.Module):
     """A Conv2d -> Batchnorm -> silu/leaky relu block"""
 
     def __init__(self, in_channels, out_channels, ksize, stride, groups=1, bias=False, act="silu"):
         super().__init__()
         # same padding
         pad = (ksize - 1) // 2
-        self.conv = nn.Conv2d(
+        self.conv = M.Conv2d(
             in_channels,
             out_channels,
             kernel_size=ksize,
@@ -42,8 +56,8 @@ class BaseConv(nn.Module):
             groups=groups,
             bias=bias,
         )
-        self.bn = nn.BatchNorm2d(out_channels)
-        self.act = get_activation(act, inplace=True)
+        self.bn = M.BatchNorm2d(out_channels)
+        self.act = get_activation(act)
 
     def forward(self, x):
         return self.act(self.bn(self.conv(x)))
@@ -52,7 +66,7 @@ class BaseConv(nn.Module):
         return self.act(self.conv(x))
 
 
-class DWConv(nn.Module):
+class DWConv(M.Module):
     """Depthwise Conv + Conv"""
     def __init__(self, in_channels, out_channels, ksize, stride=1, act="silu"):
         super().__init__()
@@ -70,7 +84,7 @@ class DWConv(nn.Module):
         return self.pconv(x)
 
 
-class Bottleneck(nn.Module):
+class Bottleneck(M.Module):
     # Standard bottleneck
     def __init__(
         self, in_channels, out_channels, shortcut=True,
@@ -90,7 +104,7 @@ class Bottleneck(nn.Module):
         return y
 
 
-class ResLayer(nn.Module):
+class ResLayer(M.Module):
     "Residual layer with `in_channels` inputs."
     def __init__(self, in_channels: int):
         super().__init__()
@@ -103,26 +117,24 @@ class ResLayer(nn.Module):
         return x + out
 
 
-class SPPBottleneck(nn.Module):
+class SPPBottleneck(M.Module):
     """Spatial pyramid pooling layer used in YOLOv3-SPP"""
     def __init__(self, in_channels, out_channels, kernel_sizes=(5, 9, 13), activation="silu"):
         super().__init__()
         hidden_channels = in_channels // 2
         self.conv1 = BaseConv(in_channels, hidden_channels, 1, stride=1, act=activation)
-        self.m = nn.ModuleList(
-            [nn.MaxPool2d(kernel_size=ks, stride=1, padding=ks // 2) for ks in kernel_sizes]
-        )
+        self.m = [M.MaxPool2d(kernel_size=ks, stride=1, padding=ks // 2) for ks in kernel_sizes]
         conv2_channels = hidden_channels * (len(kernel_sizes) + 1)
         self.conv2 = BaseConv(conv2_channels, out_channels, 1, stride=1, act=activation)
 
     def forward(self, x):
         x = self.conv1(x)
-        x = torch.cat([x] + [m(x) for m in self.m], dim=1)
+        x = F.concat([x] + [m(x) for m in self.m], axis=1)
         x = self.conv2(x)
         return x
 
 
-class CSPLayer(nn.Module):
+class CSPLayer(M.Module):
     """C3 in yolov5, CSP Bottleneck with 3 convolutions"""
 
     def __init__(
@@ -145,17 +157,17 @@ class CSPLayer(nn.Module):
             Bottleneck(hidden_channels, hidden_channels, shortcut, 1.0, depthwise, act=act)
             for _ in range(n)
         ]
-        self.m = nn.Sequential(*module_list)
+        self.m = M.Sequential(*module_list)
 
     def forward(self, x):
         x_1 = self.conv1(x)
         x_2 = self.conv2(x)
         x_1 = self.m(x_1)
-        x = torch.cat((x_1, x_2), dim=1)
+        x = F.concat((x_1, x_2), axis=1)
         return self.conv3(x)
 
 
-class Focus(nn.Module):
+class Focus(M.Module):
     """Focus width and height information into channel space."""
 
     def __init__(self, in_channels, out_channels, ksize=1, stride=1, act="silu"):
@@ -168,7 +180,7 @@ class Focus(nn.Module):
         patch_top_right = x[..., ::2, 1::2]
         patch_bot_left = x[..., 1::2, ::2]
         patch_bot_right = x[..., 1::2, 1::2]
-        x = torch.cat(
-            (patch_top_left, patch_bot_left, patch_top_right, patch_bot_right,), dim=1,
+        x = F.concat(
+            (patch_top_left, patch_bot_left, patch_top_right, patch_bot_right,), axis=1,
         )
         return self.conv(x)

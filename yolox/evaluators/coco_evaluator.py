@@ -2,24 +2,24 @@
 # -*- coding:utf-8 -*-
 # Copyright (c) Megvii, Inc. and its affiliates.
 
+import numpy as np
 import contextlib
 import io
-import itertools
 import json
 import tempfile
 import time
 from loguru import logger
 from tqdm import tqdm
 
-import torch
+import megengine as mge
+import megengine.distributed as dist
+import megengine.functional as F
 
 from yolox.utils import (
-    gather,
-    is_main_process,
     postprocess,
-    synchronize,
     time_synchronized,
-    xyxy2xywh
+    xyxy2xywh,
+    gather_pyobj,
 )
 
 
@@ -47,16 +47,9 @@ class COCOEvaluator:
         self.nmsthre = nmsthre
         self.num_classes = num_classes
         self.testdev = testdev
+        self.is_main_process = dist.get_rank() == 0
 
-    def evaluate(
-        self,
-        model,
-        distributed=False,
-        half=False,
-        trt_file=None,
-        decoder=None,
-        test_size=None,
-    ):
+    def evaluate(self, model, distributed=False, half=False, test_size=None):
         """
         COCO average precision (AP) Evaluation. Iterate inference on the test dataset
         and the results are evaluated by COCO API.
@@ -71,82 +64,61 @@ class COCOEvaluator:
             ap50 (float) : COCO AP of IoU=50
             summary (sr): summary info of evaluation.
         """
-        # TODO half to amp_test
-        tensor_type = torch.cuda.HalfTensor if half else torch.cuda.FloatTensor
-        model = model.eval()
-        if half:
-            model = model.half()
+        model.eval()
         ids = []
         data_list = []
-        progress_bar = tqdm if is_main_process() else iter
+        progress_bar = tqdm if self.is_main_process else iter
 
         inference_time = 0
         nms_time = 0
         n_samples = len(self.dataloader) - 1
 
-        if trt_file is not None:
-            from torch2trt import TRTModule
+        for cur_iter, (imgs, _, info_imgs, ids) in enumerate(progress_bar(self.dataloader)):
+            # skip the the last iters since batchsize might be not enough for batch inference
+            is_time_record = cur_iter < len(self.dataloader) - 1
+            if is_time_record:
+                start = time.time()
 
-            model_trt = TRTModule()
-            model_trt.load_state_dict(torch.load(trt_file))
+            imgs = mge.tensor(imgs.cpu().numpy())
+            outputs = model(imgs)
+            # outputs = torch.Tensor(np.array(outputs.numpy()))
 
-            x = torch.ones(1, 3, test_size[0], test_size[1]).cuda()
-            model(x)
-            model = model_trt
+            if is_time_record:
+                infer_end = time_synchronized()
+                inference_time += infer_end - start
 
-        for cur_iter, (imgs, _, info_imgs, ids) in enumerate(
-            progress_bar(self.dataloader)
-        ):
-            with torch.no_grad():
-                imgs = imgs.type(tensor_type)
-
-                # skip the the last iters since batchsize might be not enough for batch inference
-                is_time_record = cur_iter < len(self.dataloader) - 1
-                if is_time_record:
-                    start = time.time()
-
-                outputs = model(imgs)
-                if decoder is not None:
-                    outputs = decoder(outputs, dtype=outputs.type())
-
-                if is_time_record:
-                    infer_end = time_synchronized()
-                    inference_time += infer_end - start
-
-                outputs = postprocess(
-                    outputs, self.num_classes, self.confthre, self.nmsthre
-                )
-                if is_time_record:
-                    nms_end = time_synchronized()
-                    nms_time += nms_end - infer_end
+            outputs = postprocess(
+                outputs, self.num_classes, self.confthre, self.nmsthre
+            )
+            if is_time_record:
+                nms_end = time_synchronized()
+                nms_time += nms_end - infer_end
 
             data_list.extend(self.convert_to_coco_format(outputs, info_imgs, ids))
 
-        statistics = torch.cuda.FloatTensor([inference_time, nms_time, n_samples])
+        statistics = mge.tensor([inference_time, nms_time, n_samples])
         if distributed:
-            data_list = gather(data_list, dst=0)
-            data_list = list(itertools.chain(*data_list))
-            torch.distributed.reduce(statistics, dst=0)
+            statistics = F.distributed.all_reduce_sum(statistics)
+            statistics /= dist.get_world_size()
+            results = gather_pyobj(data_list, obj_name="data_list", target_rank_id=0)
+            for x in results[1:]:
+                data_list.extend(x)
 
         eval_results = self.evaluate_prediction(data_list, statistics)
-        synchronize()
+        dist.group_barrier()
         return eval_results
 
     def convert_to_coco_format(self, outputs, info_imgs, ids):
         data_list = []
-        for (output, img_h, img_w, img_id) in zip(
-            outputs, info_imgs[0], info_imgs[1], ids
-        ):
+        for (output, img_h, img_w, img_id) in zip(outputs, info_imgs[0], info_imgs[1], ids):
             if output is None:
                 continue
-            output = output.cpu()
+            output = np.array(output)
 
             bboxes = output[:, 0:4]
 
             # preprocessing: resize
-            scale = min(
-                self.img_size[0] / float(img_h), self.img_size[1] / float(img_w)
-            )
+            scale = min(self.img_size[0] / float(img_h), self.img_size[1] / float(img_w))
             bboxes /= scale
             bboxes = xyxy2xywh(bboxes)
 
@@ -157,15 +129,15 @@ class COCOEvaluator:
                 pred_data = {
                     "image_id": int(img_id),
                     "category_id": label,
-                    "bbox": bboxes[ind].numpy().tolist(),
-                    "score": scores[ind].numpy().item(),
+                    "bbox": bboxes[ind].tolist(),
+                    "score": scores[ind].item(),
                     "segmentation": [],
                 }  # COCO json format
                 data_list.append(pred_data)
         return data_list
 
     def evaluate_prediction(self, data_dict, statistics):
-        if not is_main_process():
+        if not self.is_main_process:
             return 0, 0, None
 
         logger.info("Evaluate in main process...")
@@ -206,7 +178,6 @@ class COCOEvaluator:
                 from yolox.layers import COCOeval_opt as COCOeval
             except ImportError:
                 from .cocoeval_mr import COCOeval
-
                 logger.warning("Use standard COCOeval.")
 
             cocoEval = COCOeval(cocoGt, cocoDt, annType[1])
@@ -216,6 +187,8 @@ class COCOEvaluator:
             with contextlib.redirect_stdout(redirect_string):
                 cocoEval.summarize()
             info += redirect_string.getvalue()
+            logger.info("\n" + info)
             return cocoEval.stats[0], cocoEval.stats[1], info
         else:
+            logger.info("No results!!!!")
             return 0, 0, info

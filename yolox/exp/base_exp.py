@@ -39,6 +39,10 @@ class BaseExp(metaclass=ABCMeta):
         pass
 
     @abstractmethod
+    def get_grad_manager(self):
+        pass
+
+    @abstractmethod
     def get_lr_scheduler(
         self, lr: float, iters_per_epoch: int, **kwargs
     ) -> LRScheduler:

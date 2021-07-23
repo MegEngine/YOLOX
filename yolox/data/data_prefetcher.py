@@ -4,10 +4,9 @@
 
 import random
 
-import torch
-import torch.distributed as dist
-
-from yolox.utils import synchronize
+import megengine as mge
+import megengine.functional as F
+import megengine.distributed as dist
 
 
 class DataPrefetcher:
@@ -20,10 +19,6 @@ class DataPrefetcher:
 
     def __init__(self, loader):
         self.loader = iter(loader)
-        self.stream = torch.cuda.Stream()
-        self.input_cuda = self._input_cuda_for_image
-        self.record_stream = DataPrefetcher._record_stream_for_image
-        self.preload()
 
     def preload(self):
         try:
@@ -33,33 +28,13 @@ class DataPrefetcher:
             self.next_target = None
             return
 
-        with torch.cuda.stream(self.stream):
-            self.input_cuda()
-            self.next_target = self.next_target.cuda(non_blocking=True)
-
     def next(self):
-        torch.cuda.current_stream().wait_stream(self.stream)
-        input = self.next_input
-        target = self.next_target
-        if input is not None:
-            self.record_stream(input)
-        if target is not None:
-            target.record_stream(torch.cuda.current_stream())
-        self.preload()
-        return input, target
-
-    def _input_cuda_for_image(self):
-        self.next_input = self.next_input.cuda(non_blocking=True)
-
-    @staticmethod
-    def _record_stream_for_image(input):
-        input.record_stream(torch.cuda.current_stream())
+        inputs, target, _, _ = next(self.loader)
+        return inputs.numpy(), target.numpy()
 
 
 def random_resize(data_loader, exp, epoch, rank, is_distributed):
-    tensor = torch.LongTensor(1).cuda()
-    if is_distributed:
-        synchronize()
+    tensor = mge.tensor([1])
 
     if rank == 0:
         if epoch > exp.max_epoch - 10:
@@ -67,11 +42,11 @@ def random_resize(data_loader, exp, epoch, rank, is_distributed):
         else:
             size = random.randint(*exp.random_size)
             size = int(32 * size)
-        tensor.fill_(size)
+        tensor *= size
 
     if is_distributed:
-        synchronize()
-        dist.broadcast(tensor, 0)
+        tensor = F.distributed.broadcast(tensor)
+        dist.group_barrier()
 
     input_size = data_loader.change_input_dim(multiple=tensor.item(), random_range=None)
     return input_size

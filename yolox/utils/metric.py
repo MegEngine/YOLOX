@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
+import megengine as mge
 import functools
 import os
 import time
@@ -8,14 +9,11 @@ from collections import defaultdict, deque
 
 import numpy as np
 
-import torch
-
 __all__ = [
     "AverageMeter",
     "MeterBuffer",
     "get_total_and_free_memory_in_Mb",
-    "occumpy_mem",
-    "gpu_mem_usage",
+    "time_synchronized",
 ]
 
 
@@ -28,24 +26,9 @@ def get_total_and_free_memory_in_Mb(cuda_device):
     return int(total), int(used)
 
 
-def occumpy_mem(cuda_device, mem_ratio=0.9):
-    """
-    pre-allocate gpu memory for training to avoid memory Fragmentation.
-    """
-    total, used = get_total_and_free_memory_in_Mb(cuda_device)
-    max_mem = int(total * mem_ratio)
-    block_mem = max_mem - used
-    x = torch.cuda.FloatTensor(256, 1024, block_mem)
-    del x
-    time.sleep(5)
-
-
-def gpu_mem_usage():
-    """
-    Compute the GPU memory usage for the current device (MB).
-    """
-    mem_usage_bytes = torch.cuda.max_memory_allocated()
-    return mem_usage_bytes / (1024 * 1024)
+def time_synchronized():
+    mge._full_sync()
+    return time.time()
 
 
 class AverageMeter:

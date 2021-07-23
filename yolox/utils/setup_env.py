@@ -24,7 +24,7 @@ def configure_nccl():
 
 def configure_module(ulimit_value=8192):
     """
-    Configure pytorch module environment. setting of ulimit and cv2 will be set.
+    Configure megengine module environment. setting of ulimit and cv2 will be set.
 
     Args:
         ulimit_value(int): default open file number on linux. Default value: 8192.

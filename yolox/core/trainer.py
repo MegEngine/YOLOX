@@ -7,26 +7,16 @@ import os
 import time
 from loguru import logger
 
-import apex
-import torch
-from apex import amp
-from torch.utils.tensorboard import SummaryWriter
+import megengine as mge
+import megengine.distributed as dist
 
 from yolox.data import DataPrefetcher
 from yolox.utils import (
     MeterBuffer,
     ModelEMA,
-    all_reduce_norm,
-    get_local_rank,
-    get_model_info,
-    get_rank,
-    get_world_size,
-    gpu_mem_usage,
     load_ckpt,
-    occumpy_mem,
     save_checkpoint,
     setup_logger,
-    synchronize
 )
 
 
@@ -40,24 +30,18 @@ class Trainer:
 
         # training related attr
         self.max_epoch = exp.max_epoch
-        self.amp_training = args.fp16
-        self.is_distributed = get_world_size() > 1
-        self.rank = get_rank()
-        self.local_rank = get_local_rank()
-        self.device = "cuda:{}".format(self.local_rank)
+        self.is_distributed = dist.get_world_size() > 1
+        self.rank = dist.get_rank()
+        self.local_rank = dist.get_rank()
         self.use_model_ema = exp.ema
 
         # data/dataloader related attr
-        self.data_type = torch.float16 if args.fp16 else torch.float32
         self.input_size = exp.input_size
         self.best_ap = 0
 
         # metric record
         self.meter = MeterBuffer(window_size=exp.print_interval)
         self.file_name = os.path.join(exp.output_dir, args.experiment_name)
-
-        if self.rank == 0 and os.path.exists("./" + args.experiment_name + "ip_add.txt"):
-            os.remove("./" + args.experiment_name + "ip_add.txt")
 
         if self.rank == 0:
             os.makedirs(self.file_name, exist_ok=True)
@@ -89,24 +73,18 @@ class Trainer:
         iter_start_time = time.time()
 
         inps, targets = self.prefetcher.next()
-        inps = inps.to(self.data_type)
-        targets = targets.to(self.data_type)
-        targets.requires_grad = False
+        inps, targets = mge.tensor(inps), mge.tensor(targets)
         data_end_time = time.time()
 
-        outputs = self.model(inps, targets)
-        loss = outputs["total_loss"]
+        with self.grad_manager:
+            outputs = self.model(inps, targets)
+            loss = outputs["total_loss"]
+            self.grad_manager.backward(loss)
 
-        self.optimizer.zero_grad()
-        if self.amp_training:
-            with amp.scale_loss(loss, self.optimizer) as scaled_loss:
-                scaled_loss.backward()
-        else:
-            loss.backward()
-        self.optimizer.step()
+        self.optimizer.step().clear_grad()
 
         if self.use_model_ema:
-            self.ema_model.update(self.model)
+            self.ema_model.update()
 
         lr = self.lr_scheduler.update_lr(self.progress_in_iter + 1)
         for param_group in self.optimizer.param_groups:
@@ -125,16 +103,11 @@ class Trainer:
         logger.info("exp value:\n{}".format(self.exp))
 
         # model related init
-        torch.cuda.set_device(self.local_rank)
         model = self.exp.get_model()
-        logger.info("Model Summary: {}".format(get_model_info(model, self.exp.test_size)))
-        model.to(self.device)
 
         # solver related init
         self.optimizer = self.exp.get_optimizer(self.args.batch_size)
-
-        if self.amp_training:
-            model, optimizer = amp.initialize(model, self.optimizer, opt_level="O1")
+        self.grad_manager = self.exp.get_grad_manager(self.is_distributed)
 
         # value of epoch will be set in `resume_train`
         model = self.resume_train(model)
@@ -154,13 +127,10 @@ class Trainer:
         self.lr_scheduler = self.exp.get_lr_scheduler(
             self.exp.basic_lr_per_img * self.args.batch_size, self.max_iter
         )
-        if self.args.occumpy:
-            occumpy_mem(self.local_rank)
 
         if self.is_distributed:
-            model = apex.parallel.DistributedDataParallel(model)
-            # from torch.nn.parallel import DistributedDataParallel as DDP
-            # model = DDP(model, device_ids=[self.local_rank], broadcast_buffers=False)
+            dist.bcast_list_(model.parameters())  # sync parameters
+            dist.bcast_list_(model.buffers())  # sync buffers
 
         if self.use_model_ema:
             self.ema_model = ModelEMA(model, 0.9998)
@@ -170,11 +140,8 @@ class Trainer:
         self.model.train()
 
         self.evaluator = self.exp.get_evaluator(
-            batch_size=self.args.batch_size, is_distributed=self.is_distributed
+            batch_size=self.args.batch_size // 2, is_distributed=False
         )
-        # Tensorboard logger
-        if self.rank == 0:
-            self.tblogger = SummaryWriter(self.file_name)
 
         logger.info("Training start...")
         logger.info("\n{}".format(model))
@@ -200,14 +167,10 @@ class Trainer:
                 self.save_ckpt(ckpt_name="last_mosaic_epoch")
 
     def after_epoch(self):
-        if self.use_model_ema:
-            self.ema_model.update_attr(self.model)
-
         self.save_ckpt(ckpt_name="latest")
-
         if (self.epoch + 1) % self.exp.eval_interval == 0:
-            all_reduce_norm(self.model)
             self.evaluate_and_save_model()
+        dist.group_barrier()
 
     def before_iter(self):
         pass
@@ -220,7 +183,6 @@ class Trainer:
         """
         # log needed information
         if (self.iter + 1) % self.exp.print_interval == 0:
-            # TODO check ETA logic
             left_iters = self.max_iter * self.max_epoch - (self.progress_in_iter + 1)
             eta_seconds = self.meter["iter_time"].global_avg * left_iters
             eta_str = "ETA: {}".format(datetime.timedelta(seconds=int(eta_seconds)))
@@ -229,15 +191,23 @@ class Trainer:
                 self.epoch + 1, self.max_epoch, self.iter + 1, self.max_iter
             )
             loss_meter = self.meter.get_filtered_meter("loss")
-            loss_str = ", ".join(["{}: {:.1f}".format(k, v.latest) for k, v in loss_meter.items()])
+            loss_str_list = []
+            for k, v in loss_meter.items():
+                if isinstance(v.latest, mge.tensor):
+                    single_loss_str = "{}: {:.1f}".format(k, v.latest.numpy())
+                else:
+                    single_loss_str = "{}: {:.1f}".format(k, v.latest)
+
+                loss_str_list.append(single_loss_str)
+
+            loss_str = ", ".join(loss_str_list)
 
             time_meter = self.meter.get_filtered_meter("time")
             time_str = ", ".join(["{}: {:.3f}s".format(k, v.avg) for k, v in time_meter.items()])
 
             logger.info(
-                "{}, mem: {:.0f}Mb, {}, {}, lr: {:.3e}".format(
+                "{}, {}, {}, lr: {:.3e}".format(
                     progress_str,
-                    gpu_mem_usage(),
                     time_str,
                     loss_str,
                     self.meter["lr"].latest,
@@ -260,17 +230,17 @@ class Trainer:
         if self.args.resume:
             logger.info("resume training")
             if self.args.ckpt is None:
-                ckpt_file = os.path.join(self.file_name, "latest" + "_ckpt.pth.tar")
+                ckpt_file = os.path.join(self.file_name, "latest" + "_ckpt.pkl")
             else:
                 ckpt_file = self.args.ckpt
 
-            ckpt = torch.load(ckpt_file, map_location=self.device)
+            ckpt = mge.load(ckpt_file, map_location="cpu")
             # resume the model/optimizer state dict
-            model.load_state_dict(ckpt["model"])
+            model_state = ckpt["model"]
+            for i in range(3):
+                model_state.pop("head.grids.{}".format(i), None)
+            model.load_state_dict(model_state, strict=False)
             self.optimizer.load_state_dict(ckpt["optimizer"])
-            # resume the training states variables
-            if self.amp_training and "amp" in ckpt:
-                amp.load_state_dict(ckpt["amp"])
             start_epoch = (
                 self.args.start_epoch - 1
                 if self.args.start_epoch is not None
@@ -282,7 +252,7 @@ class Trainer:
             if self.args.ckpt is not None:
                 logger.info("loading checkpoint for fine tuning")
                 ckpt_file = self.args.ckpt
-                ckpt = torch.load(ckpt_file, map_location=self.device)["model"]
+                ckpt = mge.load(ckpt_file, map_location="cpu")["model"]
                 model = load_ckpt(model, ckpt)
             self.start_epoch = 0
 
@@ -290,13 +260,9 @@ class Trainer:
 
     def evaluate_and_save_model(self):
         evalmodel = self.ema_model.ema if self.use_model_ema else self.model
-        ap50_95, ap50, summary = self.exp.eval(evalmodel, self.evaluator, self.is_distributed)
+        ap50_95, ap50, summary = self.exp.eval(evalmodel, self.evaluator, False)
+        dist.group_barrier()
         self.model.train()
-        if self.rank == 0:
-            self.tblogger.add_scalar("val/COCOAP50", ap50, self.epoch + 1)
-            self.tblogger.add_scalar("val/COCOAP50_95", ap50_95, self.epoch + 1)
-            logger.info("\n" + summary)
-        synchronize()
 
         self.save_ckpt("last_epoch", ap50_95 > self.best_ap)
         self.best_ap = max(self.best_ap, ap50_95)
@@ -310,10 +276,8 @@ class Trainer:
                 "model": save_model.state_dict(),
                 "optimizer": self.optimizer.state_dict(),
             }
-            if self.amp_training:
-                # save amp state according to
-                # https://nvidia.github.io/apex/amp.html#checkpointing
-                ckpt_state["amp"] = amp.state_dict()
+            if self.use_model_ema:
+                ckpt_state["origin_model"] = self.model.state_dict()
             save_checkpoint(
                 ckpt_state,
                 update_best_ckpt,

@@ -5,10 +5,13 @@
 import os
 import random
 
-import torch
-import torch.distributed as dist
-import torch.nn as nn
+import megengine as mge
+import megengine.functional as F
+import megengine.module as M
+import megengine.distributed as dist
+from megengine.autodiff import GradManager
 
+from yolox.utils import SGD
 from .base_exp import BaseExp
 
 
@@ -51,7 +54,7 @@ class Exp(BaseExp):
 
         self.weight_decay = 5e-4
         self.momentum = 0.9
-        self.print_interval = 10
+        self.print_interval = 5
         self.eval_interval = 10
         self.exp_name = os.path.split(os.path.realpath(__file__))[1].split(".")[0]
 
@@ -63,11 +66,11 @@ class Exp(BaseExp):
     def get_model(self):
         from yolox.models import YOLOX, YOLOPAFPN, YOLOXHead
 
-        def init_yolo(M):
-            for m in M.modules():
-                if isinstance(m, nn.BatchNorm2d):
+        def init_yolo(model):
+            for m in model.modules():
+                if isinstance(m, M.BatchNorm2d):
                     m.eps = 1e-3
-                    m.momentum = 0.03
+                    m.momentum = 1 - 0.03
 
         if getattr(self, "model", None) is None:
             in_channels = [256, 512, 1024]
@@ -77,6 +80,8 @@ class Exp(BaseExp):
 
         self.model.apply(init_yolo)
         self.model.head.initialize_biases(1e-2)
+        # weight_state = mge.load("weight_mge.pkl")
+        # self.model.load_state_dict(weight_state, strict=False)
         return self.model
 
     def get_data_loader(self, batch_size, is_distributed, no_aug=False):
@@ -135,24 +140,24 @@ class Exp(BaseExp):
         )
 
         dataloader_kwargs = {"num_workers": self.data_num_workers, "pin_memory": True}
+        # dataloader_kwargs = {"num_workers": 0, "pin_memory": True}
         dataloader_kwargs["batch_sampler"] = batch_sampler
         train_loader = DataLoader(self.dataset, **dataloader_kwargs)
 
         return train_loader
 
     def random_resize(self, data_loader, epoch, rank, is_distributed):
-        tensor = torch.LongTensor(2).cuda()
+        tensor = mge.Tensor([0, 0])
 
         if rank == 0:
             size_factor = self.input_size[1] * 1. / self.input_size[0]
             size = random.randint(*self.random_size)
             size = (int(32 * size), 32 * int(size * size_factor))
-            tensor[0] = size[0]
-            tensor[1] = size[1]
+            tensor = mge.Tensor([size[0], size[1]])
 
         if is_distributed:
-            dist.barrier()
-            dist.broadcast(tensor, 0)
+            tensor = F.distributed.broadcast(tensor)
+            dist.group_barrier()
 
         input_size = data_loader.change_input_dim(
             multiple=(tensor[0].item(), tensor[1].item()), random_range=None
@@ -169,23 +174,31 @@ class Exp(BaseExp):
             pg0, pg1, pg2 = [], [], []  # optimizer parameter groups
 
             for k, v in self.model.named_modules():
-                if hasattr(v, "bias") and isinstance(v.bias, nn.Parameter):
+                if "head.grid" in k:
+                    continue
+                if hasattr(v, "bias") and isinstance(v.bias, mge.Parameter):
                     pg2.append(v.bias)  # biases
-                if isinstance(v, nn.BatchNorm2d) or "bn" in k:
+
+                if isinstance(v, M.BatchNorm2d):
                     pg0.append(v.weight)  # no decay
-                elif hasattr(v, "weight") and isinstance(v.weight, nn.Parameter):
+                elif hasattr(v, "weight") and isinstance(v.weight, mge.Parameter):
                     pg1.append(v.weight)  # apply decay
 
-            optimizer = torch.optim.SGD(
-                pg0, lr=lr, momentum=self.momentum, nesterov=True
-            )
-            optimizer.add_param_group(
-                {"params": pg1, "weight_decay": self.weight_decay}
-            )  # add pg1 with weight_decay
-            optimizer.add_param_group({"params": pg2})
+            pg_list = []
+            pg_list.append({"params": pg0 + pg2})
+            pg_list.append({"params": pg1, "weight_decay": self.weight_decay})
+            optimizer = SGD(pg_list, lr=float(lr), momentum=self.momentum, nesterov=True)
             self.optimizer = optimizer
 
         return self.optimizer
+
+    def get_grad_manager(self, is_distributed):
+        if "grad_manager" not in self.__dict__:
+            gm = GradManager()
+            callbacks = [dist.make_allreduce_cb("MEAN", dist.WORLD)] if is_distributed else None  # noqa
+            gm.attach(self.model.parameters(), callbacks=callbacks)
+            self.grad_manager = gm
+        return self.grad_manager
 
     def get_lr_scheduler(self, lr, iters_per_epoch):
         from yolox.utils import LRScheduler
@@ -202,6 +215,7 @@ class Exp(BaseExp):
         return scheduler
 
     def get_eval_loader(self, batch_size, is_distributed, testdev=False):
+        import torch
         from yolox.data import COCODataset, ValTransform
 
         valdataset = COCODataset(
@@ -217,13 +231,16 @@ class Exp(BaseExp):
         if is_distributed:
             batch_size = batch_size // dist.get_world_size()
             sampler = torch.utils.data.distributed.DistributedSampler(
-                valdataset, shuffle=False
+                valdataset,
+                shuffle=False,
+                num_replicas=dist.get_world_size(),
+                rank=dist.get_rank(),
             )
         else:
             sampler = torch.utils.data.SequentialSampler(valdataset)
 
         dataloader_kwargs = {
-            "num_workers": self.data_num_workers,
+            "num_workers": 4,
             "pin_memory": True,
             "sampler": sampler,
         }

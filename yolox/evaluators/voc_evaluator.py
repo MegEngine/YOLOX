@@ -5,15 +5,16 @@
 import sys
 import tempfile
 import time
-from collections import ChainMap
 from loguru import logger
 from tqdm import tqdm
 
 import numpy as np
 
-import torch
+import megengine as mge
+import megengine.distributed as dist
+import megengine.functional as F
 
-from yolox.utils import gather, is_main_process, postprocess, synchronize, time_synchronized
+from yolox.utils import postprocess, time_synchronized, gather_pyobj
 
 
 class VOCEvaluator:
@@ -39,9 +40,10 @@ class VOCEvaluator:
         self.nmsthre = nmsthre
         self.num_classes = num_classes
         self.num_images = len(dataloader.dataset)
+        self.is_main_process = dist.get_rank() == 0
 
     def evaluate(
-        self, model, distributed=False, half=False, trt_file=None, decoder=None, test_size=None
+        self, model, distributed=False, decoder=None, test_size=None
     ):
         """
         VOC average precision (AP) Evaluation. Iterate inference on the test dataset
@@ -58,61 +60,48 @@ class VOCEvaluator:
             summary (sr): summary info of evaluation.
         """
         # TODO half to amp_test
-        tensor_type = torch.cuda.HalfTensor if half else torch.cuda.FloatTensor
-        model = model.eval()
-        if half:
-            model = model.half()
+        model.eval()
         ids = []
         data_list = {}
-        progress_bar = tqdm if is_main_process() else iter
+        progress_bar = tqdm if self.is_main_process else iter
 
         inference_time = 0
         nms_time = 0
         n_samples = len(self.dataloader) - 1
 
-        if trt_file is not None:
-            from torch2trt import TRTModule
-            model_trt = TRTModule()
-            model_trt.load_state_dict(torch.load(trt_file))
-
-            x = torch.ones(1, 3, test_size[0], test_size[1]).cuda()
-            model(x)
-            model = model_trt
-
         for cur_iter, (imgs, _, info_imgs, ids) in enumerate(progress_bar(self.dataloader)):
-            with torch.no_grad():
-                imgs = imgs.type(tensor_type)
+            # skip the the last iters since batchsize might be not enough for batch inference
+            is_time_record = cur_iter < len(self.dataloader) - 1
+            if is_time_record:
+                start = time.time()
 
-                # skip the the last iters since batchsize might be not enough for batch inference
-                is_time_record = cur_iter < len(self.dataloader) - 1
-                if is_time_record:
-                    start = time.time()
+            outputs = model(imgs)
+            if decoder is not None:
+                outputs = decoder(outputs, dtype=outputs.type())
 
-                outputs = model(imgs)
-                if decoder is not None:
-                    outputs = decoder(outputs, dtype=outputs.type())
+            if is_time_record:
+                infer_end = time_synchronized()
+                inference_time += infer_end - start
 
-                if is_time_record:
-                    infer_end = time_synchronized()
-                    inference_time += infer_end - start
-
-                outputs = postprocess(
-                    outputs, self.num_classes, self.confthre, self.nmsthre
-                )
-                if is_time_record:
-                    nms_end = time_synchronized()
-                    nms_time += nms_end - infer_end
+            outputs = postprocess(
+                outputs, self.num_classes, self.confthre, self.nmsthre
+            )
+            if is_time_record:
+                nms_end = time_synchronized()
+                nms_time += nms_end - infer_end
 
             data_list.update(self.convert_to_voc_format(outputs, info_imgs, ids))
 
-        statistics = torch.cuda.FloatTensor([inference_time, nms_time, n_samples])
+        statistics = mge.tensor([inference_time, nms_time, n_samples]).astype("float32")
         if distributed:
-            data_list = gather(data_list, dst=0)
-            data_list = ChainMap(*data_list)
-            torch.distributed.reduce(statistics, dst=0)
+            statistics = F.distributed.all_reduce_sum(statistics)
+            statistics /= dist.get_world_size()
+            results = gather_pyobj(data_list, obj_name="data_list", target_rank_id=0)
+            for x in results[1:]:
+                data_list.extend(x)
 
         eval_results = self.evaluate_prediction(data_list, statistics)
-        synchronize()
+        dist.group_barrier()
         return eval_results
 
     def convert_to_voc_format(self, outputs, info_imgs, ids):
@@ -136,7 +125,7 @@ class VOCEvaluator:
         return predictions
 
     def evaluate_prediction(self, data_dict, statistics):
-        if not is_main_process():
+        if not self.is_main_process:
             return 0, 0, None
 
         logger.info("Evaluate in main process...")
@@ -170,7 +159,7 @@ class VOCEvaluator:
                     all_boxes[j][img_num] = np.empty([0, 5], dtype=np.float32)
                     continue
 
-                c_dets = torch.cat((bboxes, scores.unsqueeze(1)), dim=1)
+                c_dets = F.concat((bboxes, scores.unsqueeze(1)), axis=1)
                 all_boxes[j][img_num] = c_dets[mask_c].numpy()
 
             sys.stdout.write(

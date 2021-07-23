@@ -2,12 +2,12 @@
 # -*- encoding: utf-8 -*-
 # Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
 
-from torch import nn
+import megengine.module as M
 
 from .network_blocks import BaseConv, CSPLayer, DWConv, Focus, ResLayer, SPPBottleneck
 
 
-class Darknet(nn.Module):
+class Darknet(M.Module):
     # number of blocks from dark2 to dark5.
     depth2blocks = {21: [1, 2, 2, 1], 53: [2, 8, 8, 4]}
 
@@ -25,7 +25,7 @@ class Darknet(nn.Module):
         super().__init__()
         assert out_features, "please provide output features of Darknet"
         self.out_features = out_features
-        self.stem = nn.Sequential(
+        self.stem = M.Sequential(
             BaseConv(in_channels, stem_out_channels, ksize=3, stride=1, act="lrelu"),
             *self.make_group_layer(stem_out_channels, num_blocks=1, stride=2),
         )
@@ -34,14 +34,14 @@ class Darknet(nn.Module):
         num_blocks = Darknet.depth2blocks[depth]
         # create darknet with `stem_out_channels` and `num_blocks` layers.
         # to make model structure more clear, we don't use `for` statement in python.
-        self.dark2 = nn.Sequential(*self.make_group_layer(in_channels, num_blocks[0], stride=2))
+        self.dark2 = M.Sequential(*self.make_group_layer(in_channels, num_blocks[0], stride=2))
         in_channels *= 2  # 128
-        self.dark3 = nn.Sequential(*self.make_group_layer(in_channels, num_blocks[1], stride=2))
+        self.dark3 = M.Sequential(*self.make_group_layer(in_channels, num_blocks[1], stride=2))
         in_channels *= 2  # 256
-        self.dark4 = nn.Sequential(*self.make_group_layer(in_channels, num_blocks[2], stride=2))
+        self.dark4 = M.Sequential(*self.make_group_layer(in_channels, num_blocks[2], stride=2))
         in_channels *= 2  # 512
 
-        self.dark5 = nn.Sequential(
+        self.dark5 = M.Sequential(
             *self.make_group_layer(in_channels, num_blocks[3], stride=2),
             *self.make_spp_block([in_channels, in_channels * 2], in_channels * 2),
         )
@@ -54,7 +54,7 @@ class Darknet(nn.Module):
         ]
 
     def make_spp_block(self, filters_list, in_filters):
-        m = nn.Sequential(
+        m = M.Sequential(
             *[
                 BaseConv(in_filters, filters_list[0], 1, stride=1, act="lrelu"),
                 BaseConv(filters_list[0], filters_list[1], 3, stride=1, act="lrelu"),
@@ -84,7 +84,7 @@ class Darknet(nn.Module):
         return {k: v for k, v in outputs.items() if k in self.out_features}
 
 
-class CSPDarknet(nn.Module):
+class CSPDarknet(M.Module):
 
     def __init__(
         self, dep_mul, wid_mul,
@@ -103,7 +103,7 @@ class CSPDarknet(nn.Module):
         self.stem = Focus(3, base_channels, ksize=3, act=act)
 
         # dark2
-        self.dark2 = nn.Sequential(
+        self.dark2 = M.Sequential(
             Conv(base_channels, base_channels * 2, 3, 2, act=act),
             CSPLayer(
                 base_channels * 2, base_channels * 2,
@@ -112,7 +112,7 @@ class CSPDarknet(nn.Module):
         )
 
         # dark3
-        self.dark3 = nn.Sequential(
+        self.dark3 = M.Sequential(
             Conv(base_channels * 2, base_channels * 4, 3, 2, act=act),
             CSPLayer(
                 base_channels * 4, base_channels * 4,
@@ -121,7 +121,7 @@ class CSPDarknet(nn.Module):
         )
 
         # dark4
-        self.dark4 = nn.Sequential(
+        self.dark4 = M.Sequential(
             Conv(base_channels * 4, base_channels * 8, 3, 2, act=act),
             CSPLayer(
                 base_channels * 8, base_channels * 8,
@@ -130,7 +130,7 @@ class CSPDarknet(nn.Module):
         )
 
         # dark5
-        self.dark5 = nn.Sequential(
+        self.dark5 = M.Sequential(
             Conv(base_channels * 8, base_channels * 16, 3, 2, act=act),
             SPPBottleneck(base_channels * 16, base_channels * 16, activation=act),
             CSPLayer(

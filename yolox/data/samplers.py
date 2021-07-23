@@ -6,7 +6,8 @@ import itertools
 from typing import Optional
 
 import torch
-import torch.distributed as dist
+# import megengine.functional as F
+import megengine.distributed as dist
 from torch.utils.data.sampler import BatchSampler as torchBatchSampler
 from torch.utils.data.sampler import Sampler
 
@@ -69,12 +70,8 @@ class InfiniteSampler(Sampler):
         self._shuffle = shuffle
         self._seed = int(seed)
 
-        if dist.is_available() and dist.is_initialized():
-            self._rank = dist.get_rank()
-            self._world_size = dist.get_world_size()
-        else:
-            self._rank = rank
-            self._world_size = world_size
+        self._rank = dist.get_rank()
+        self._world_size = dist.get_world_size()
 
     def __iter__(self):
         start = self._rank
