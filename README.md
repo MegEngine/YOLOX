@@ -115,17 +115,28 @@ python tools/eval.py -n  yolox-tiny -c yolox_tiny.pkl -b 1 -d 1 --conf 0.001 --f
 </details>
 
 
-<details open>
+<details>
 <summary>Tutorials</summary>
 
 *  [Training on custom data](docs/train_custom_data.md).
 
 </details>
 
+
+
 ## MegEngine Deployment
 
-[MegEngine in C++ and Python](./demo/MegEngine)
+[MegEngine in C++](./demo/MegEngine)
 
+<details>
+<summary>Dump mge file</summary>
+
+**NOTE**: result model is dumped with `optimize_for_inference` and `enable_fuse_conv_bias_nonlinearity`.
+
+```shell
+python3 tools/export_mge.py -n yolox-tiny -c yolox_tiny.pkl --dump_path yolox_tiny.mge
+```
+</details>
 
 ## Third-party resources
 * The ncnn android app with video support: [ncnn-android-yolox](https://github.com/FeiGeChuanShu/ncnn-android-yolox) from [FeiGeChuanShu](https://github.com/FeiGeChuanShu)
