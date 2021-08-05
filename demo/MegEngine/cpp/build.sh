@@ -53,9 +53,8 @@ if [[ $CXX =~ "android" ]]; then
     echo "try command to run:"
     echo "adb push/scp $MGE_INSTALL_PATH/lib/libmegengine.so android_phone"
     echo "adb push/scp $OPENCV_INSTALL_LIB_PATH/*.so android_phone"
-    echo "adb push/scp ./yolox yolox_s.mge android_phone"
-    echo "adb push/scp ../../../assets/dog.jpg android_phone"
-    echo "adb/ssh to android_phone, then run: LD_LIBRARY_PATH=. ./yolox yolox_s.mge dog.jpg cpu/multithread <warmup_count> <thread_number> <use_fast_run> <use_weight_preprocess>"
+    echo "adb push/scp ./yolox yolox_s.mge ../../../assets/dog.jpg android_phone"
+    echo "adb/ssh to android_phone, then run: LD_LIBRARY_PATH=. ./yolox yolox_s.mge dog.jpg cpu <warmup_count> <thread_number> <run_with_fp16>"
 else
-    echo "try command to run: LD_LIBRARY_PATH=$MGE_INSTALL_PATH/lib/:$OPENCV_INSTALL_LIB_PATH ./yolox yolox_s.mge ../../../assets/dog.jpg cuda/cpu/multithread <warmup_count> <thread_number> <use_fast_run> <use_weight_preprocess>"
+    echo "try command to run: LD_LIBRARY_PATH=$MGE_INSTALL_PATH/lib/:$OPENCV_INSTALL_LIB_PATH ./yolox yolox_s.mge ../../../assets/dog.jpg cuda/cpu <warmup_count> <thread_number> <run_with_fp16>"
 fi

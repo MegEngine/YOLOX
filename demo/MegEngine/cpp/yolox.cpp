@@ -359,11 +359,10 @@ int main(int argc, char *argv[]) {
   auto &&graph_opt = load_config.comp_graph->options();
   graph_opt.graph_opt_level = 0;
 
-  if (argc != 9) {
+  if (argc != 7) {
     std::cout << "Usage : " << argv[0]
               << " <path_to_model> <path_to_image> <device> <warmup_count> "
-                 "<thread_number> <use_fast_run> <use_weight_preprocess> "
-                 "<run_with_fp16>"
+                 "<thread_number> <run_with_fp16>"
               << std::endl;
     return EXIT_FAILURE;
   }
@@ -373,27 +372,29 @@ int main(int argc, char *argv[]) {
   const std::string device{argv[3]};
   const size_t warmup_count = atoi(argv[4]);
   const size_t thread_number = atoi(argv[5]);
-  const size_t use_fast_run = atoi(argv[6]);
-  const size_t use_weight_preprocess = atoi(argv[7]);
-  const size_t run_with_fp16 = atoi(argv[8]);
+  const size_t run_with_fp16 = atoi(argv[6]);
+  const size_t use_fast_run = 1;
+  const size_t use_weight_preprocess = 1;
 
   if (device == "cuda") {
     load_config.comp_node_mapper = [](CompNode::Locator &loc) {
       loc.type = CompNode::DeviceType::CUDA;
     };
   } else if (device == "cpu") {
-    load_config.comp_node_mapper = [](CompNode::Locator &loc) {
-      loc.type = CompNode::DeviceType::CPU;
-    };
-  } else if (device == "multithread") {
-    load_config.comp_node_mapper = [thread_number](CompNode::Locator &loc) {
-      loc.type = CompNode::DeviceType::MULTITHREAD;
-      loc.device = 0;
-      loc.stream = thread_number;
-    };
     std::cout << "use " << thread_number << " thread" << std::endl;
+    if (thread_number == 1) {
+      load_config.comp_node_mapper = [](CompNode::Locator &loc) {
+        loc.type = CompNode::DeviceType::CPU;
+      };
+    } else {
+      load_config.comp_node_mapper = [thread_number](CompNode::Locator &loc) {
+        loc.type = CompNode::DeviceType::MULTITHREAD;
+        loc.device = 0;
+        loc.stream = thread_number;
+      };
+    };
   } else {
-    std::cout << "device only support cuda or cpu or multithread" << std::endl;
+    std::cout << "device only support cuda or cpu" << std::endl;
     return EXIT_FAILURE;
   }
 
@@ -419,7 +420,14 @@ int main(int argc, char *argv[]) {
     }
 #endif
 #if defined(__x86_64__) || defined(__amd64__) || defined(__i386__)
-    // graph_opt.graph_opt.enable_nchw88();
+    if (device == "cpu" && thread_number == 1) {
+      std::cout << "choose format for nchw88 for x86" << std::endl;
+      graph_opt.graph_opt.enable_nchw88();
+    }
+    if (device == "cpu" && run_with_fp16) {
+      std::cout << "fp16 no available for x86" << std::endl;
+      return EXIT_FAILURE;
+    }
 #endif
   }
 
