@@ -4,7 +4,8 @@
 ## Introduction
 YOLOX is an anchor-free version of YOLO, with a simpler design but better performance! It aims to bridge the gap between research and industrial communities.
 For more details, please refer to our [report on Arxiv](https://arxiv.org/abs/2107.08430).
-This repo is an implementation of [MegEngine](https://github.com/MegEngine/MegEngine) version YOLOX.
+
+This repo is an implementation of [MegEngine](https://github.com/MegEngine/MegEngine) version YOLOX, there is also a [PyTorch implementation](https://github.com/Megvii-BaseDetection/YOLOX).
 
 <img src="assets/git_fig.png" width="1000" >
 
@@ -34,7 +35,7 @@ Comming soon!
 
 Step1. Install YOLOX.
 ```shell
-git clone git@github.com:Megvii-BaseDetection/YOLOX.git
+git clone git@github.com:MegEngine/YOLOX.git
 cd YOLOX
 pip3 install -U pip && pip3 install -r requirements.txt
 pip3 install -v -e .  # or  python3 setup.py develop
@@ -126,7 +127,7 @@ python tools/eval.py -n  yolox-tiny -c yolox_tiny.pkl -b 1 -d 1 --conf 0.001 --f
 
 ## MegEngine Deployment
 
-[MegEngine in C++](./demo/MegEngine)
+[MegEngine in C++](./demo/MegEngine/cpp)
 
 <details>
 <summary>Dump mge file</summary>
@@ -137,6 +138,28 @@ python tools/eval.py -n  yolox-tiny -c yolox_tiny.pkl -b 1 -d 1 --conf 0.001 --f
 python3 tools/export_mge.py -n yolox-tiny -c yolox_tiny.pkl --dump_path yolox_tiny.mge
 ```
 </details>
+
+### Benchmark
+
+* Model Info: yolox-s @ input(1,3,640,640)
+
+* Testing Devices
+
+  * `x86_64 -- Intel(R) Xeon(R) CPU E5-2620 v4 @ 2.10GHz`
+  * `AArch64 -- xiamo phone mi9`
+  * `CUDA -- 1080TI @ cuda-10.1-cudnn-v7.6.3-TensorRT-6.0.1.5.sh @ Intel(R) Xeon(R) CPU E5-2620 v4 @ 2.10GHz`
+
+| megengine@tag1.5 +fastrun +weight\_preprocess (msec) | 1 thread | 2 thread | 4 thread | 8 thread |
+| ---------------------------------------------------- | -------- | -------- | -------- | -------- |
+| x86\_64(fp32)                                        | 516.245  | 318.29   | 253.273  | 222.534  |
+| x86\_64(fp32+chw88)                                  | 362.020  |   NONE   |   NONE   |   NONE   |
+| aarch64(fp32+chw44)                                  | 555.877  | 351.371  | 242.044  |   NONE   |
+| aarch64(fp16+chw)                                    | 439.606  | 327.356  | 255.531  |   NONE   |
+
+| CUDA @ CUDA (msec)  | 1 batch    | 2 batch   | 4 batch   | 8 batch   | 16 batch  | 32 batch | 64 batch |
+| ------------------- | ---------- | --------- | --------- | --------- | --------- | -------- | -------- |
+| megengine(fp32+chw) |   8.137    |  13.2893  |  23.6633  |   44.470  |  86.491   |  168.95  |  334.248 |
+
 
 ## Third-party resources
 * The ncnn android app with video support: [ncnn-android-yolox](https://github.com/FeiGeChuanShu/ncnn-android-yolox) from [FeiGeChuanShu](https://github.com/FeiGeChuanShu)

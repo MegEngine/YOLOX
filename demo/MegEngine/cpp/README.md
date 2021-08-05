@@ -196,20 +196,20 @@ Compilation of CPP files for YOLOX object detection based on [MegEngine](https:/
 
 * Testing Devices
 
-  * x86_64 -- Intel(R) Xeon(R) CPU E5-2620 v4 @ 2.10GHz
-  * AArch64 -- xiamo phone mi9
-  * CUDA -- 1080TI @ cuda-10.1-cudnn-v7.6.3-TensorRT-6.0.1.5.sh @ Intel(R) Xeon(R) CPU E5-2620 v4 @ 2.10GHz
+  * `x86_64 -- Intel(R) Xeon(R) CPU E5-2620 v4 @ 2.10GHz`
+  * `AArch64 -- xiamo phone mi9`
+  * `CUDA -- 1080TI @ cuda-10.1-cudnn-v7.6.3-TensorRT-6.0.1.5.sh @ Intel(R) Xeon(R) CPU E5-2620 v4 @ 2.10GHz`
 
-| megengine @ tag1.5(fastrun + weight\_preprocess)/sec | 1 thread | 2 thread | 4 thread | 8 thread |
+| megengine@tag1.5 +fastrun +weight\_preprocess (msec) | 1 thread | 2 thread | 4 thread | 8 thread |
 | ---------------------------------------------------- | -------- | -------- | -------- | -------- |
-| x86\_64(fp32)                                        | 0.516245 | 0.31829  | 0.253273 | 0.222534 |
-| x86\_64(fp32+chw88)                                  | 0.362020 |   NONE   |   NONE   |   NONE   |
-| aarch64(fp32+chw44)                                  | 0.555877 | 0.351371 | 0.242044 |   NONE   |
-| aarch64(fp16+chw)                                    | 0.439606 | 0.327356 | 0.255531 |   NONE   |
+| x86\_64(fp32)                                        | 516.245  | 318.29   | 253.273  | 222.534  |
+| x86\_64(fp32+chw88)                                  | 362.020  |   NONE   |   NONE   |   NONE   |
+| aarch64(fp32+chw44)                                  | 555.877  | 351.371  | 242.044  |   NONE   |
+| aarch64(fp16+chw)                                    | 439.606  | 327.356  | 255.531  |   NONE   |
 
-| CUDA @ 1080TI/sec   | 1 batch    | 2 batch   | 4 batch   | 8 batch   | 16 batch  | 32 batch | 64 batch |
+| CUDA @ CUDA (msec)  | 1 batch    | 2 batch   | 4 batch   | 8 batch   | 16 batch  | 32 batch | 64 batch |
 | ------------------- | ---------- | --------- | --------- | --------- | --------- | -------- | -------- |
-| megengine(fp32+chw) | 0.00813703 | 0.0132893 | 0.0236633 | 0.0444699 | 0.0864917 | 0.16895  | 0.334248 |
+| megengine(fp32+chw) |   8.137    |  13.2893  |  23.6633  |   44.470  |  86.491   |  168.95  |  334.248 |
 
 ## Acknowledgement
 
