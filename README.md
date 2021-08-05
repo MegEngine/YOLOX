@@ -21,7 +21,7 @@ This repo is an implementation of [MegEngine](https://github.com/MegEngine/MegEn
 #### Light Models.
 | Model                                      | size | mAP<sup>val<br>0.5:0.95 | Params<br>(M) | FLOPs<br>(G) |                           weights                            |
 | ------------------------------------------ | :--: | :---------------------: | :-----------: | :----------: | :----------------------------------------------------------: |
-| [YOLOX-Tiny](./exps/default/yolox_tiny.py) | 416  |          32.2           |     5.06      |     6.45     | [onedrive]()/[github]() |
+| [YOLOX-Tiny](./exps/default/yolox_tiny.py) | 416  |          32.2           |     5.06      |     6.45     | [github](https://github.com/MegEngine/YOLOX/releases/download/0.0.1/yolox_tiny.pkl) |
 
 
 #### Standard Models.
