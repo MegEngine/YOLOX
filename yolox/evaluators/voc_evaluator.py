@@ -14,7 +14,7 @@ import megengine as mge
 import megengine.distributed as dist
 import megengine.functional as F
 
-from yolox.utils import postprocess, time_synchronized, gather_pyobj
+from yolox.utils import gather_pyobj, postprocess, time_synchronized
 
 
 class VOCEvaluator:

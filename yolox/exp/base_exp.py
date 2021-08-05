@@ -8,8 +8,8 @@ from abc import ABCMeta, abstractmethod
 from typing import Dict
 from tabulate import tabulate
 
+import megengine.module as M
 import torch
-from torch.nn import Module
 
 from yolox.utils import LRScheduler
 
@@ -25,7 +25,7 @@ class BaseExp(metaclass=ABCMeta):
         self.eval_interval = 10
 
     @abstractmethod
-    def get_model(self) -> Module:
+    def get_model(self) -> M.Module:
         pass
 
     @abstractmethod

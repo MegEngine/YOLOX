@@ -5,8 +5,8 @@
 import random
 
 import megengine as mge
-import megengine.functional as F
 import megengine.distributed as dist
+import megengine.functional as F
 
 
 class DataPrefetcher:

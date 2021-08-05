@@ -2,10 +2,12 @@
 # -*- coding:utf-8 -*-
 # Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
 
-import numpy as np
-from megengine import Tensor
 from typing import Optional
+
+import numpy as np
+
 import megengine.functional as F
+from megengine import Tensor
 
 __all__ = [
     "batched_nms",

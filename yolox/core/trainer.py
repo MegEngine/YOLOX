@@ -11,13 +11,7 @@ import megengine as mge
 import megengine.distributed as dist
 
 from yolox.data import DataPrefetcher
-from yolox.utils import (
-    MeterBuffer,
-    ModelEMA,
-    load_ckpt,
-    save_checkpoint,
-    setup_logger,
-)
+from yolox.utils import MeterBuffer, ModelEMA, load_ckpt, save_checkpoint, setup_logger
 
 
 class Trainer:

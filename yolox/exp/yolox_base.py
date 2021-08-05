@@ -6,12 +6,13 @@ import os
 import random
 
 import megengine as mge
+import megengine.distributed as dist
 import megengine.functional as F
 import megengine.module as M
-import megengine.distributed as dist
 from megengine.autodiff import GradManager
 
 from yolox.utils import SGD
+
 from .base_exp import BaseExp
 
 

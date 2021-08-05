@@ -5,12 +5,12 @@
 import math
 
 import megengine as mge
-import megengine.module as M
 import megengine.functional as F
+import megengine.module as M
 
 from yolox.utils import bboxes_iou
 
-from .losses import iou_loss, l1_loss, binary_cross_entropy
+from .losses import binary_cross_entropy, iou_loss, l1_loss
 from .network_blocks import BaseConv, DWConv
 
 

@@ -2,6 +2,7 @@
 # -*- encoding: utf-8 -*-
 # Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
 import functools
+
 import megengine.functional as F
 
 

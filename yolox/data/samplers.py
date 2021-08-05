@@ -5,9 +5,9 @@
 import itertools
 from typing import Optional
 
-import torch
 # import megengine.functional as F
 import megengine.distributed as dist
+import torch
 from torch.utils.data.sampler import BatchSampler as torchBatchSampler
 from torch.utils.data.sampler import Sampler
 

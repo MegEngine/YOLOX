@@ -2,7 +2,6 @@
 # -*- coding:utf-8 -*-
 # Copyright (c) Megvii, Inc. and its affiliates.
 
-import numpy as np
 import contextlib
 import io
 import json
@@ -11,16 +10,13 @@ import time
 from loguru import logger
 from tqdm import tqdm
 
+import numpy as np
+
 import megengine as mge
 import megengine.distributed as dist
 import megengine.functional as F
 
-from yolox.utils import (
-    postprocess,
-    time_synchronized,
-    xyxy2xywh,
-    gather_pyobj,
-)
+from yolox.utils import gather_pyobj, postprocess, time_synchronized, xyxy2xywh
 
 
 class COCOEvaluator:
@@ -81,7 +77,6 @@ class COCOEvaluator:
 
             imgs = mge.tensor(imgs.cpu().numpy())
             outputs = model(imgs)
-            # outputs = torch.Tensor(np.array(outputs.numpy()))
 
             if is_time_record:
                 infer_end = time_synchronized()

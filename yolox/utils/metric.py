@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
-import megengine as mge
 import functools
 import os
 import time
 from collections import defaultdict, deque
 
 import numpy as np
+
+import megengine as mge
 
 __all__ = [
     "AverageMeter",
