@@ -187,17 +187,17 @@ class Trainer:
             loss_meter = self.meter.get_filtered_meter("loss")
             loss_str_list = []
             for k, v in loss_meter.items():
-                if isinstance(v.latest, mge.tensor):
-                    single_loss_str = "{}: {:.1f}".format(k, v.latest.numpy())
-                else:
-                    single_loss_str = "{}: {:.1f}".format(k, v.latest)
+                single_loss_str = "{}: {:.1f}".format(k, float(v.latest))
 
                 loss_str_list.append(single_loss_str)
 
             loss_str = ", ".join(loss_str_list)
 
             time_meter = self.meter.get_filtered_meter("time")
-            time_str = ", ".join(["{}: {:.3f}s".format(k, v.avg) for k, v in time_meter.items()])
+            time_str = ", ".join([
+                "{}: {:.3f}s".format(k, float(v.avg))
+                for k, v in time_meter.items()
+            ])
 
             logger.info(
                 "{}, {}, {}, lr: {:.3e}".format(
@@ -224,7 +224,7 @@ class Trainer:
         if self.args.resume:
             logger.info("resume training")
             if self.args.ckpt is None:
-                ckpt_file = os.path.join(self.file_name, "latest" + "_ckpt.pkl")
+                ckpt_file = os.path.join(self.file_name, "latest_ckpt.pkl")
             else:
                 ckpt_file = self.args.ckpt
 

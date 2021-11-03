@@ -5,7 +5,6 @@ import math
 from copy import deepcopy
 
 import megengine as mge
-from megengine.functional.inplace import _inplace_add_
 
 
 class ModelEMA:
@@ -21,19 +20,15 @@ class ModelEMA:
             updates (int): counter of EMA updates.
         """
         # Create EMA(FP32)
-        # NOTE: EMA don't need grad
+        # NOTE: EMA don't need gradient
         self.ema = deepcopy(model)
         self.ema.eval()
         # self._ema_states = list(self.ema.parameters())
         self._ema_states = {k: v for k, v in self.ema.named_parameters()}
-        self._ema_states.update(
-            {n: p for n, p in self.ema.named_buffers() if "head.grids" not in n}
-        )
+        self._ema_states.update({n: p for n, p in self.ema.named_buffers()})
 
         self._model_states = {k: v for k, v in model.named_parameters()}
-        self._model_states.update(
-            {n: p for n, p in model.named_buffers() if "head.grids" not in n}
-        )
+        self._model_states.update({n: p for n, p in model.named_buffers()})
 
         self.updates = updates
         # decay exponential ramp (to help early epochs)
@@ -45,5 +40,4 @@ class ModelEMA:
         d = self.decay(self.updates)
 
         for k, v in self._ema_states.items():
-            # v._reset(v * mge.tensor(d) + mge.tensor(1 - d) * self._model_states[k])
-            _inplace_add_(v, self._model_states[k], alpha=mge.tensor(d), beta=mge.tensor(1 - d))
+            v._reset(v * mge.tensor(d) + mge.tensor(1 - d) * self._model_states[k])

@@ -30,10 +30,10 @@ def make_parser():
         type=str,
         help="plz input your expriment description file",
     )
-    parser.add_argument(
-        "--resume", default=False, action="store_true", help="resume training"
-    )
+    parser.add_argument("--resume", action="store_true", help="resume training")
+    parser.add_argument("--dtr", action="store_true", help="use dtr for training")
     parser.add_argument("-c", "--ckpt", default=None, type=str, help="checkpoint file")
+    parser.add_argument("--start-epoch", default=None, type=int, help="start epoch of training")
     parser.add_argument(
         "--num_machine", default=1, type=int, help="num of node for training"
     )
@@ -61,7 +61,9 @@ def main(exp, args):
     configure_nccl()
 
     # enable dtr to avoid CUDA OOM
-    mge.dtr.enable()
+    if args.dtr:
+        logger.info("enable DTR during training...")
+        mge.dtr.enable()
 
     if args.sync_level is not None:
         # NOTE: use sync_level = 0 to debug mge error
@@ -79,7 +81,7 @@ if __name__ == "__main__":
     exp.merge(args.opts)
 
     mp.set_start_method("spawn")
-    num_gpus = dist.helper.get_device_count_by_fork("gpu")
+    num_gpus = mge.device.get_device_count("gpu")
 
     if args.devices is None:
         args.devices = num_gpus
