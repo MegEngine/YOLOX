@@ -8,4 +8,4 @@ torchvision
 Pillow
 ninja
 tabulate
-megengine==1.4.3
+megengine==1.6.0

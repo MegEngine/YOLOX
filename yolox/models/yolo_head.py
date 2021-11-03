@@ -3,6 +3,7 @@
 # Copyright (c) 2014-2021 Megvii Inc. All rights reserved.
 
 import math
+import numpy as np
 
 import megengine as mge
 import megengine.functional as F
@@ -128,7 +129,7 @@ class YOLOXHead(M.Module):
 
         self.use_l1 = False
         self.strides = strides
-        self.grids = [F.zeros(1)] * len(in_channels)
+        self.grids = [np.array(0)] * len(in_channels)
         self.expanded_strides = [None] * len(in_channels)
 
     def initialize_biases(self, prior_prob):
@@ -513,3 +514,10 @@ class YOLOXHead(M.Module):
             pred_ious_this_matching.detach(),
             matched_gt_inds.detach(),
         )
+
+    def state_dict(self, *args, **kwargs):
+        head_state_dict = super().state_dict(*args, **kwargs)
+        drop_keynames = ["grids.0", "grids.1", "grids.2"]
+        for keyname in drop_keynames:
+            head_state_dict.pop(keyname, None)
+        return head_state_dict

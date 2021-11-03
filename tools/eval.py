@@ -6,7 +6,6 @@ import argparse
 import os
 from loguru import logger
 
-# from torch.nn.parallel import DistributedDataParallel as DDP
 import megengine as mge
 import megengine.distributed as dist
 
@@ -133,7 +132,7 @@ if __name__ == "__main__":
     exp = get_exp(args.exp_file, args.name)
     exp.merge(args.opts)
 
-    num_gpus = dist.helper.get_device_count_by_fork("gpu")
+    num_gpus = mge.device.get_device_count("gpu")
 
     if args.devices is None:
         args.devices = num_gpus
