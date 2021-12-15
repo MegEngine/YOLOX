@@ -146,7 +146,7 @@ python3 tools/export_mge.py -n yolox-tiny -c yolox_tiny.pkl --dump_path yolox_ti
 * Testing Devices
 
   * `x86_64 -- Intel(R) Xeon(R) CPU E5-2620 v4 @ 2.10GHz`
-  * `AArch64 -- xiamo phone mi9`
+  * `AArch64 -- Xiaomi phone mi9`
   * `CUDA -- 1080TI @ cuda-10.1-cudnn-v7.6.3-TensorRT-6.0.1.5.sh @ Intel(R) Xeon(R) CPU E5-2620 v4 @ 2.10GHz`
 
 | megengine@tag1.5 +fastrun +weight\_preprocess (msec) | 1 thread | 2 thread | 4 thread | 8 thread |
