@@ -56,7 +56,7 @@ def build_and_load(model, weight_file=None):
 
 def main(args, exp):
     model = exp.get_model()
-    model = build_and_load(model, exp)
+    model = build_and_load(model, args.ckpt)
     dump_static_graph(model, args.dump_path, args.shape)
 
 
