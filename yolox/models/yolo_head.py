@@ -205,7 +205,7 @@ class YOLOXHead(M.Module):
         n_ch = 5 + self.num_classes
         hsize, wsize = output.shape[-2:]
         if grid.shape[2:4] != output.shape[2:4]:
-            xv, yv = meshgrid(F.arange(hsize), F.arange(wsize))
+            xv, yv = meshgrid(F.arange(wsize), F.arange(hsize))
             grid = F.stack((xv, yv), 2).reshape(1, 1, hsize, wsize, 2)
             self.grids[k] = grid
 
@@ -223,7 +223,7 @@ class YOLOXHead(M.Module):
         grids = []
         strides = []
         for (hsize, wsize), stride in zip(self.hw, self.strides):
-            xv, yv = meshgrid(F.arange(hsize), F.arange(wsize))
+            xv, yv = meshgrid(F.arange(wsize), F.arange(hsize))
             grid = F.stack((xv, yv), 2).reshape(1, -1, 2)
             grids.append(grid)
             shape = grid.shape[:2]
